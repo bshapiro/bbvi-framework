@@ -20,10 +20,8 @@ class Model(object):
     def __init__(self, data=None):
         """
         This method should be overriden. Use it to define
-        self.var_initializations and self.param_names, then
-        call self.setup(data) to finish model setup. Optionally,
-        define discrete param names and discrete initializations
-        as well.
+        any additional variables needed to compute the log density.
+        Optionally, include any additional initialization logic.
         """
         self.data = data
 
@@ -40,7 +38,7 @@ class Model(object):
         This method should be overridden if the variational approximation
         does not have an analytic entropy. It should return the log density
         of the param samples according to the variational parameters (e.g.
-        log q(z | lambda)).
+        log q(z | lambda)). TODO: automate this
         """
         pass
 
@@ -48,7 +46,7 @@ class Model(object):
         """
         Use this method to execute any changes to the model that need to
         be accomplished between iterations, for example to update discrete
-        variables.
+        variables or to perform EM steps.
         """
         pass
 
@@ -87,9 +85,7 @@ def black_box_variational_inference(logprob, logvar, distributions, num_samples,
         if len(distributions) == 1 and distribution == 'gaussian':
             lower_bound = gaussian_entropy(np.log(np.sqrt(cov))) + np.mean(logprob(total_samples, t))
         else:
-            # lower_bound = np.mean(logprob(total_samples, t))
             lower_bound = np.mean(-logvar(total_samples, variational_params) + logprob(total_samples, t))
-        # print(params[-2:])
         return -lower_bound  # make it negative so that we can do gradient descent
 
     gradient = grad(variational_objective)
@@ -98,21 +94,22 @@ def black_box_variational_inference(logprob, logvar, distributions, num_samples,
 
 
 def run_vi(model, step_size=1, num_samples=10, num_iters=1000, plottable=False, random_state=None):
+    """
+    Runs the variational inference gradient optimization procedure. When finished, returns the model
+    and the parameters.
+    """
 
     objective, gradient, unpack_params = \
         black_box_variational_inference(model.log_density, model.log_var, model.distributions, num_samples=num_samples, random_state=random_state)
 
-    # Set up figure.
     if plottable:
-        print("PLOTTING IS ON")
         fig = plt.figure(figsize=(8, 8), facecolor='white')
         ax = fig.add_subplot(111, frameon=False)
         plt.ion()
         plt.show(block=False)
 
     def callback(params, t, g):
-        # print("Iteration {} lower bound {}".format(t, -objective(params, t)))
-        print("Iteration {} of VI complete.".format(t))
+        print("Iteration {} lower bound {}".format(t, -objective(params, t)))
         params = unpack_params(params)
         model.callback(params, t, g)
 
@@ -128,8 +125,6 @@ def run_vi(model, step_size=1, num_samples=10, num_iters=1000, plottable=False, 
             plot_isocontours(ax, variational_contour)
             plt.draw()
             plt.pause(1.0 / 30.0)
-
-        # visualize_2d_results(model.view1, model.view2, model.zA, model.zB, model.muA, model.muB, model.sigmaA, model.sigmaB)
 
     print("Optimizing variational parameters...")
     x = copy(model.variational_params)
@@ -149,4 +144,4 @@ def run_vi(model, step_size=1, num_samples=10, num_iters=1000, plottable=False, 
         x = x - step_size * mhat / (np.sqrt(vhat) + eps)
         x = model.update(x)
 
-    return x
+    return model, x
