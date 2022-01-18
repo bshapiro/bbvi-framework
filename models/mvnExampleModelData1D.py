@@ -22,7 +22,7 @@ class Model(BaseModel):
         total_log_prob = np.array([np.sum(norm.logpdf(self.data, mu[i, :], np.sqrt(softplus(sigma[i, :])))) for i in range(mu.shape[0])])
         return total_log_prob
 
-    def callback(self, params, t, g):
+    def visualize(self, ax, params, i):
         mu = params[0:1]
         std = np.sqrt(softplus(params[2:3]))
         x = np.linspace(-5, 5, 100)

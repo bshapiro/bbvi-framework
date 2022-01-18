@@ -46,6 +46,11 @@ class BaseModel(object):
         self.variational_params = np.hstack(self.variational_params)
 
     def add_parameter(self, name, length, mean_init, sigma_init, mean_step, sigma_step):
+        """
+        Use this method to add any parameters dynamically when you initialize your model.
+        Then access your parameters from log_density using the dictionary produced by
+        unpack_param_samples. All bookkeeping is done for you!
+        """
         self.variational_params.extend(mean_init * np.ones(length))
         self.variational_params.extend(sigma_init * np.ones(length))
         self.step_size.extend([mean_step] * length)
@@ -55,47 +60,37 @@ class BaseModel(object):
         self.param_sample_index += length
 
     def unpack_param_samples(self, param_samples):
+        """
+        Processes parameter samples into dictionary indexed by parameter name.
+        """
         param_dict = {}
         for param in self.param_info.keys():
-            sample_index, param_index, length, sigma_length = self.param_info[param]
+            sample_index, param_index, length = self.param_info[param]
             param_dict[param] = param_samples[:, sample_index:sample_index + length]
-        return param_dict
-
-    def unpack_params(self, params):
-        param_dict = {}
-        for param in self.param_info.keys():
-            sample_index, param_index, length, sigma_length = self.param_info[param]
-            param_dict[param] = (params[:, param_index:param_index + length], params[:, param_index + length:param_index + length * 2])
         return param_dict
 
     def log_density(self, param_samples, t):
         """
         This method should be overriden. It should return
         the joint log density of the data and each set of parameter
-        samples using the names defined in the param samples in param_samples.
+        samples using the names defined in the dictionary returned by
+        a call to unpack_param_samples(param_samples).
         """
         pass
 
-    def log_var(self, param_samples, variational_params):
-        """
-        Computes the log density of the param samples according to
-        the variational parameters (e.g. log q(z | lambda)).
-        """
-        log_prob = 0
-        param_dict = self.unpack_params(param_samples)
-        for key in param_dict.keys():
-            sample_index, param_index, length, sigma_length = self.param_info[key]
-            log_prob = log_prob + mvn.logpdf(param_samples[:, sample_index:sample_index + length],
-                                             variational_params[param_index:param_index + length],
-                                             np.diag(softplus(variational_params[param_index + length:param_index + length + sigma_length])))
-
-        return log_prob
-
-    def callback(self):
+    def callback(self, params, iter, gradient):
         """
         Override this method to execute any changes to the model that need to
         be accomplished between iterations, for example to update discrete
         variables or to perform EM steps.
+        """
+        pass
+
+    def visualize(self, ax, params, iter):
+        """
+        Override this method to execute any visualization that you'd like to occur
+        between iterations.
+        'ax' is a pointer to the matptlotlib figure Axes object.
         """
         pass
 
@@ -105,6 +100,34 @@ class BaseModel(object):
         Changes to the parameters will NOT be included in gradient calculations.
         """
         return params
+
+    def unpack_params(self, params):
+        """
+        Unpacks parameters into dictionary. For each parameter,
+        the dictionary contains a tuple for the variational distribution
+        (mean, sigma).
+        """
+        param_dict = {}
+        for param in self.param_info.keys():
+            sample_index, param_index, length = self.param_info[param]
+            param_dict[param] = (params[param_index:param_index + length], params[param_index + length:param_index + length * 2])
+        return param_dict
+
+    def _log_var(self, param_samples, variational_params):
+        """
+        Automatically computes the log density of the param samples according to
+        the variational parameters (e.g. log q(z | lambda)).
+        Used in ELBO estimation (internal use).
+        """
+        log_prob = 0
+        param_dict = self.unpack_params(param_samples)
+        for key in param_dict.keys():
+            sample_index, param_index, length = self.param_info[key]
+            log_prob = log_prob + mvn.logpdf(param_samples[:, sample_index:sample_index + length],
+                                             variational_params[param_index:param_index + length],
+                                             np.diag(softplus(variational_params[param_index + length:param_index + length*2])))
+
+        return log_prob
 
 
 def black_box_variational_inference(logprob, logvar, param_info, num_samples, random_state=None):
@@ -123,7 +146,7 @@ def black_box_variational_inference(logprob, logvar, param_info, num_samples, ra
         variational_params = unpack_params(params)
         samples = btn.list([])
         for key in param_info.keys():
-            sample_index, param_index, length, sigma_length = param_info[key]
+            sample_index, param_index, length = param_info[key]
             mean = np.array(variational_params[param_index:param_index + length])
             cov = regularize(softplus(np.array(variational_params[param_index + length:param_index + length * 2])))
             noise_samples = np.array(rs.randn(num_samples, len(mean)))
