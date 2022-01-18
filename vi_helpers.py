@@ -1,7 +1,6 @@
 import autograd.numpy as np
 import matplotlib.pyplot as plt
 
-
 def all_same(items):
     return all(np.array_equal(x, items[0]) for x in items)
 

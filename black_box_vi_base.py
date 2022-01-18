@@ -1,29 +1,72 @@
 from autograd import grad
 from autograd.misc import flatten
-from autograd.misc.optimizers import adam
-from vi_helpers import plot_isocontours, regularize, softplus
+from copy import copy
+from vi_helpers import regularize, softplus
 import autograd.builtins as btn
 import autograd.numpy as np
 import autograd.numpy.random as npr
 import autograd.scipy.stats.multivariate_normal as mvn
-import matplotlib.pyplot as plt
-from copy import copy
+import json
 
 
-class Model(object):
+class BaseModel(object):
     """
     Base model class. Sets up parameter handling.
     Every new model should extend the model class and override
     the log_density method.
     """
 
-    def __init__(self, data=None):
+    def __init__(self, param_location=None, data=None):
         """
-        This method should be overriden. Use it to define
-        any additional variables needed to compute the log density.
+        Make sure to extend this class so that the below initialization
+        logic still occurs in your model. Then define any additional variables
+        needed to compute the log density.
         Optionally, include any additional initialization logic.
         """
         self.data = data
+        self.variational_params = []
+        self.param_info = {}
+        self.param_index = 0
+        self.param_sample_index = 0
+        self.step_size = []
+
+        param_file = open(param_location)
+        params = json.load(param_file)
+
+        for param in params['params']:
+            name = param['name']
+            length = param['length']
+            mean_init = param['mean_init']
+            sigma_init = param['sigma_init']
+            mean_step = param['mean_step']
+            sigma_step = param['sigma_step']
+
+            self.add_parameter(name, length, mean_init, sigma_init, mean_step, sigma_step)
+
+        self.variational_params = np.hstack(self.variational_params)
+
+    def add_parameter(self, name, length, mean_init, sigma_init, mean_step, sigma_step):
+        self.variational_params.extend(mean_init * np.ones(length))
+        self.variational_params.extend(sigma_init * np.ones(length))
+        self.step_size.extend([mean_step] * length)
+        self.step_size.extend([sigma_step] * length)
+        self.param_info[name] = (copy(self.param_sample_index), copy(self.param_index), length)
+        self.param_index += length * 2
+        self.param_sample_index += length
+
+    def unpack_param_samples(self, param_samples):
+        param_dict = {}
+        for param in self.param_info.keys():
+            sample_index, param_index, length, sigma_length = self.param_info[param]
+            param_dict[param] = param_samples[:, sample_index:sample_index + length]
+        return param_dict
+
+    def unpack_params(self, params):
+        param_dict = {}
+        for param in self.param_info.keys():
+            sample_index, param_index, length, sigma_length = self.param_info[param]
+            param_dict[param] = (params[:, param_index:param_index + length], params[:, param_index + length:param_index + length * 2])
+        return param_dict
 
     def log_density(self, param_samples, t):
         """
@@ -35,16 +78,22 @@ class Model(object):
 
     def log_var(self, param_samples, variational_params):
         """
-        This method should be overridden if the variational approximation
-        does not have an analytic entropy. It should return the log density
-        of the param samples according to the variational parameters (e.g.
-        log q(z | lambda)). TODO: automate this
+        Computes the log density of the param samples according to
+        the variational parameters (e.g. log q(z | lambda)).
         """
-        pass
+        log_prob = 0
+        param_dict = self.unpack_params(param_samples)
+        for key in param_dict.keys():
+            sample_index, param_index, length, sigma_length = self.param_info[key]
+            log_prob = log_prob + mvn.logpdf(param_samples[:, sample_index:sample_index + length],
+                                             variational_params[param_index:param_index + length],
+                                             np.diag(softplus(variational_params[param_index + length:param_index + length + sigma_length])))
+
+        return log_prob
 
     def callback(self):
         """
-        Use this method to execute any changes to the model that need to
+        Override this method to execute any changes to the model that need to
         be accomplished between iterations, for example to update discrete
         variables or to perform EM steps.
         """
@@ -52,13 +101,13 @@ class Model(object):
 
     def update(self, params):
         """
-        Use this method to update the parameters between inference steps.
+        OVerride this method to update the parameters between inference steps.
         Changes to the parameters will NOT be included in gradient calculations.
         """
-        pass
+        return params
 
 
-def black_box_variational_inference(logprob, logvar, distributions, num_samples, random_state=None):
+def black_box_variational_inference(logprob, logvar, param_info, num_samples, random_state=None):
     """Implements http://arxiv.org/abs/1401.0118, and uses the
     local reparameterization trick from http://arxiv.org/abs/1506.02557"""
 
@@ -73,16 +122,15 @@ def black_box_variational_inference(logprob, logvar, distributions, num_samples,
     def variational_objective(params, t):
         variational_params = unpack_params(params)
         samples = btn.list([])
-        for i in range(len(distributions)):
-            param_name, distribution, dimension, param_index = distributions[i]
-            if distribution == 'gaussian':
-                mean = np.array(variational_params[param_index:param_index + dimension])
-                cov = regularize(softplus(np.array(variational_params[param_index + dimension:param_index + dimension * 2])))
-                noise_samples = np.array(rs.randn(num_samples, len(mean)))
-                cur_samples = noise_samples * np.sqrt(cov) + mean
-                samples.append(cur_samples)
+        for key in param_info.keys():
+            sample_index, param_index, length, sigma_length = param_info[key]
+            mean = np.array(variational_params[param_index:param_index + length])
+            cov = regularize(softplus(np.array(variational_params[param_index + length:param_index + length * 2])))
+            noise_samples = np.array(rs.randn(num_samples, len(mean)))
+            cur_samples = noise_samples * np.sqrt(cov) + mean
+            samples.append(cur_samples)
         total_samples = np.hstack(samples)
-        if len(distributions) == 1 and distribution == 'gaussian':
+        if len(param_info.keys()) == 1:  # if only one distribution, then we can calculate the entropy exactly
             lower_bound = gaussian_entropy(np.log(np.sqrt(cov))) + np.mean(logprob(total_samples, t))
         else:
             lower_bound = np.mean(-logvar(total_samples, variational_params) + logprob(total_samples, t))
@@ -91,57 +139,3 @@ def black_box_variational_inference(logprob, logvar, distributions, num_samples,
     gradient = grad(variational_objective)
 
     return variational_objective, gradient, unpack_params
-
-
-def run_vi(model, step_size=1, num_samples=10, num_iters=1000, plottable=False, random_state=None):
-    """
-    Runs the variational inference gradient optimization procedure. When finished, returns the model
-    and the parameters.
-    """
-
-    objective, gradient, unpack_params = \
-        black_box_variational_inference(model.log_density, model.log_var, model.distributions, num_samples=num_samples, random_state=random_state)
-
-    if plottable:
-        fig = plt.figure(figsize=(8, 8), facecolor='white')
-        ax = fig.add_subplot(111, frameon=False)
-        plt.ion()
-        plt.show(block=False)
-
-    def callback(params, t, g):
-        print("Iteration {} lower bound {}".format(t, -objective(params, t)))
-        params = unpack_params(params)
-        model.callback(params, t, g)
-
-        if plottable:
-            mean, std = params[0:2], params[2:4]
-            print(mean, std)
-
-            plt.cla()
-            target_distribution = lambda x: np.exp(model.log_density(x, t))
-            plot_isocontours(ax, target_distribution)
-
-            variational_contour = lambda x: mvn.pdf(x, mean, np.diag(2 * softplus(std)))
-            plot_isocontours(ax, variational_contour)
-            plt.draw()
-            plt.pause(1.0 / 30.0)
-
-    print("Optimizing variational parameters...")
-    x = copy(model.variational_params)
-    b1 = 0.9
-    b2 = 0.999
-    eps = 10**-8
-    m = np.zeros(len(x))
-    v = np.zeros(len(x))
-    for i in range(num_iters):
-        g = gradient(x, i)
-        if callback:
-            callback(x, i, g)
-        m = (1 - b1) * g + b1 * m  # First  moment estimate.
-        v = (1 - b2) * (g**2) + b2 * v  # Second moment estimate.
-        mhat = m / (1 - b1**(i + 1))    # Bias correction.
-        vhat = v / (1 - b2**(i + 1))
-        x = x - step_size * mhat / (np.sqrt(vhat) + eps)
-        x = model.update(x)
-
-    return model, x
