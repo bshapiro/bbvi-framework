@@ -1,0 +1,18 @@
+{
+"params": [
+	{"name": "mu",
+	"length": 1,
+	"mean_init": -1,
+	"sigma_init": -5,
+	"mean_step": 0.1,
+	"sigma_step": 0.1
+	},
+	{"name": "sigma",
+	"length": 1,
+	"mean_init": -1,
+	"sigma_init": -5,
+	"mean_step": 0.1,
+	"sigma_step": 0.1
+	}
+] 
+}
