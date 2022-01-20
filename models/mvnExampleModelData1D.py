@@ -23,8 +23,9 @@ class Model(BaseModel):
         return total_log_prob
 
     def visualize(self, ax, params, i):
-        mu = params[0:1]
-        std = np.sqrt(softplus(params[2:3]))
+        param_dict = self.unpack_params(params)
+        mu = param_dict['mu'][0]
+        std = np.sqrt(softplus(param_dict['sigma'][0]))
         x = np.linspace(-5, 5, 100)
         plt.plot(x, stats.norm.pdf(x, mu, std))
         plt.draw()

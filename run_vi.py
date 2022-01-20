@@ -15,12 +15,13 @@ parser = OptionParser()
 ################### REQUIRED PARAMETERS ################### 
 parser.add_option("-i", "--iters", dest="iters",
                   help="The number of iterations of variational inference to run", metavar="ITERS")
-parser.add_option("-p", "--params", dest="params",
-                  help="The location of the variational parameter descriptor file", metavar="PARAMS")
 parser.add_option("-m", "--model",
                   help="The name of the model to be learned", metavar="MODEL")
 
 ################### OPTIONAL PARAMETERS ################### 
+parser.add_option("-p", "--params", dest="params",
+                  help="The location of the variational parameter descriptor file",
+                  default=None, metavar="PARAMS")
 parser.add_option("-s", "--samples", default=10, dest="samples",
                   help="The number of variational samples to draw at every iteration", metavar="SAMPLES")
 parser.add_option("-g", "--gradient", dest="estimate",
@@ -40,6 +41,7 @@ def run_vi(model, step_size=1, num_samples=10, num_iters=1000, visualize=False, 
     Runs the variational inference gradient optimization procedure. When finished, returns the model
     and the parameters.
     """
+    model._config()
 
     objective, gradient, unpack_params = \
         black_box_variational_inference(model.log_density, model._log_var, model.param_info, num_samples=num_samples, random_state=random_state)

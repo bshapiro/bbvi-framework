@@ -1,5 +1,9 @@
 import autograd.numpy as np
 import matplotlib.pyplot as plt
+import autograd.scipy.stats.multivariate_normal as mvn
+import pandas as pd
+from numpy.random import multivariate_normal
+
 
 def all_same(items):
     return all(np.array_equal(x, items[0]) for x in items)
@@ -53,3 +57,34 @@ def plot_isocontours(ax, func, xlimits=[-2, 2], ylimits=[-4, 2], numticks=101):
     plt.contour(X, Y, Z)
     ax.set_yticks([])
     ax.set_xticks([])
+
+
+def generate_clusters(n, sigma):
+    clusters = [[-2, 0], [2, 0], [-2, -4], [2, -4]]
+    ns = [n, n, n, n]
+    sigmas = [sigma, sigma, sigma, sigma]
+    samples = []
+    for cluster in range(len(clusters)):
+        samples.extend(multivariate_normal(clusters[cluster], sigmas[cluster] * np.eye(len(clusters[0])), size=ns[cluster]))
+    return np.array(samples)
+
+
+def plot_clusters(clusters, samples, labels, title):
+    sample_x = [sample[0] for sample in samples]
+    sample_y = [sample[1] for sample in samples]
+    labels = labels
+    df = pd.DataFrame({"x": sample_x, "y": sample_y, "cluster": labels})
+    groups = df.groupby("cluster")
+    plt.title(title)
+    for name, group in groups:
+        plt.scatter(group["x"], group["y"], label=name)
+    if clusters is not None:
+        plt.scatter([cluster[0] for cluster in clusters], [cluster[1] for cluster in clusters], s=50, c='black')
+
+
+def visualize_clusters(ax, samples, labels, means, covs):
+    plot_clusters(None, samples, labels, '')
+    for ci in range(len(means)):
+        variational_contour = lambda x: mvn.pdf(x, means[ci], covs[ci])
+        plot_isocontours(ax, variational_contour, xlimits=ax.get_xlim(), ylimits=ax.get_ylim())
+    plt.legend()

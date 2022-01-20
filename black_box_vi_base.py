@@ -1,7 +1,7 @@
 from autograd import grad
 from autograd.misc import flatten
 from copy import copy
-from vi_helpers import regularize, softplus
+from vi_helpers import regularize, softplus, size
 import autograd.builtins as btn
 import autograd.numpy as np
 import autograd.numpy.random as npr
@@ -30,19 +30,22 @@ class BaseModel(object):
         self.param_sample_index = 0
         self.step_size = []
 
-        param_file = open(param_location)
-        params = json.load(param_file)
+        if param_location is not None:
+            param_file = open(param_location)
+            params = json.load(param_file)
 
-        for param in params['params']:
-            name = param['name']
-            length = param['length']
-            mean_init = param['mean_init']
-            sigma_init = param['sigma_init']
-            mean_step = param['mean_step']
-            sigma_step = param['sigma_step']
+            for param in params['params']:
+                self.add_parameter(param['name'],
+                                   param['length'],
+                                   param['mean_init'],
+                                   param['sigma_init'],
+                                   param['mean_step'],
+                                   param['sigma_step'])
 
-            self.add_parameter(name, length, mean_init, sigma_init, mean_step, sigma_step)
-
+    def _config(self):
+        """
+        Sets the model up for the VI run. Internal use.
+        """
         self.variational_params = np.hstack(self.variational_params)
 
     def add_parameter(self, name, length, mean_init, sigma_init, mean_step, sigma_step):
@@ -51,8 +54,18 @@ class BaseModel(object):
         Then access your parameters from log_density using the dictionary produced by
         unpack_param_samples. All bookkeeping is done for you!
         """
-        self.variational_params.extend(mean_init * np.ones(length))
-        self.variational_params.extend(sigma_init * np.ones(length))
+        if size(mean_init) == 1:
+            self.variational_params.extend(mean_init * np.ones(length))
+        elif len(mean_init) == length:
+            self.variational_params.extend(np.array(mean_init))
+        else:
+            print("Invalid length for mean initialization of parameter", name)
+        if size(sigma_init) == 1:
+            self.variational_params.extend(sigma_init * np.ones(length))
+        elif len(sigma_init) == length:
+            self.variational_params.extend(np.array(sigma_init))
+        else:
+            print("Invalid length for sigma initialization of parameter", name)
         self.step_size.extend([mean_step] * length)
         self.step_size.extend([sigma_step] * length)
         self.param_info[name] = (copy(self.param_sample_index), copy(self.param_index), length)
